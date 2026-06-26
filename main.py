@@ -3,20 +3,32 @@ import json
 import requests
 import os
 import random
-from conversations import SCENARIOS # Đảm bảo file này nằm cùng thư mục
+from conversations import SCENARIOS
 
+# Lấy thông tin từ .env
 TOKENS_RAW = os.getenv("TOKEN", "")
 GUILD_ID = os.getenv("SERVER_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 TARGET_CHANNEL_NAME = "# 5 • 👥 Team Starry's Channel"
-TOKEN_JOIN_DELAYS = [ (i * (i + 1) // 2) * 60 for i in range(8) ]
 API = "https://discord.com/api/v10"
 
+# DANH SÁCH TÊN CHUẨN ĐÃ MAP VỚI THỨ TỰ TOKEN CỦA NÍ
 MEMBER_NAMES = [
-    "TeamStarry", "Bocchi", "Nijika", "Ryo", 
-    "Kita", "Kikuri", "HitoriGotou2102", "PA-san"
+    "Kikuri",      # 1. hiroikikuri2809
+    "Nijika",      # 2. nijikaijichi2905
+    "Ryo",         # 3. ryoyamada1809
+    "Kita",        # 4. ikuyokita0421
+    "PA-san",      # 5. kitakitan0421
+    "Seika",       # 6. japanember
+    "Hitori",      # 7. hitorigotou2102
+    "TeamStarry"   # 8. teamstarry
 ]
+
+# Nhân vật chính điều khiển kịch bản (Hitori là index 6)
+TALKER_INDEX = 6 
+
+TOKEN_JOIN_DELAYS = [ (i * (i + 1) // 2) * 60 for i in range(8) ]
 
 class TokenClient:
     def __init__(self, token, index, name, guild_id, channel_id):
@@ -27,6 +39,7 @@ class TokenClient:
 
     async def join_voice(self):
         try:
+            # Đổi tên kênh khi join
             requests.patch(f"{API}/channels/{self.channel_id}", 
                            headers={"Authorization": self.token}, 
                            json={"name": TARGET_CHANNEL_NAME})
@@ -34,13 +47,13 @@ class TokenClient:
         print(f"[*] {self.name} đã vào voice.")
 
     async def chat_loop(self):
-        """Logic chat với thời gian random để trông giống người thật"""
+        """Logic chat với thời gian random"""
         s_idx = 0
         while True:
             scenario = SCENARIOS[s_idx]
             for speaker, content in scenario:
                 if speaker == self.name:
-                    # Random delay trước khi nhắn: 20-45 giây
+                    # Random delay: 20-45 giây giữa các câu
                     await asyncio.sleep(random.uniform(20, 45))
                     
                     headers = {"Authorization": self.token, "Content-Type": "application/json"}
@@ -50,7 +63,7 @@ class TokenClient:
             
             # Random nghỉ giữa các kịch bản: 80-100 phút
             rest_time = random.randint(4800, 6000)
-            print(f"[*] {self.name} nghỉ kịch bản {s_idx+1}, chờ {rest_time//60} phút.")
+            print(f"[*] {self.name} hoàn thành kịch bản {s_idx+1}, nghỉ {rest_time//60} phút.")
             await asyncio.sleep(rest_time)
             
             s_idx = (s_idx + 1) % len(SCENARIOS)
@@ -58,11 +71,11 @@ class TokenClient:
 async def run_token(token, i, gid, cid):
     client = TokenClient(token, i, MEMBER_NAMES[i], gid, cid)
     
+    # Delay join theo thứ tự
     delay = TOKEN_JOIN_DELAYS[i]
     print(f"[*] {client.name} sẽ join sau {delay//60} phút")
     await asyncio.sleep(delay)
     
-    # Chạy song song Voice (giữ kết nối) và Chat (theo kịch bản)
     await asyncio.gather(
         client.join_voice(),
         client.chat_loop()
