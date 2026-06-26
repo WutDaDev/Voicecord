@@ -13,17 +13,7 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 TARGET_CHANNEL_NAME = "# 5 • 👥 Team Starry's Channel"
 API = "https://discord.com/api/v10"
 
-# Danh sách chuẩn đã map với thứ tự Token trong .env
-MEMBER_NAMES = [
-    "Kikuri",      # 1. hiroikikuri2809
-    "Nijika",      # 2. nijikaijichi2905
-    "Ryo",         # 3. ryoyamada1809
-    "Kita",        # 4. ikuyokita0421
-    "PA-san",      # 5. kitakitan0421
-    "Seika",       # 6. japanember
-    "Hitori",      # 7. hitorigotou2102
-    "TeamStarry"   # 8. teamstarry
-]
+MEMBER_NAMES = ["Kikuri", "Nijika", "Ryo", "Kita", "PA-san", "Seika", "Hitori", "TeamStarry"]
 
 # Hitori là nhân vật chính (index 6)
 TALKER_INDEX = 6 
