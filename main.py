@@ -1,101 +1,134 @@
 import asyncio
+import json
+import requests
+import websockets
 import os
-import aiohttp
 
-# Configuration
+# Đọc token từ TOKEN env, cách nhau bằng dấu phẩy
 TOKENS_RAW = os.getenv("TOKEN", "")
 GUILD_ID = os.getenv("SERVER_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+STATUS = os.getenv("STATUS", "online")
+SELF_MUTE = os.getenv("SELF_MUTE", "False").lower() in ("true", "1", "yes")
+SELF_DEAF = os.getenv("SELF_DEAF", "False").lower() in ("true", "1", "yes")
+JOIN_DELAY = int(os.getenv("JOIN_DELAY", "30"))  # Delay giữa các token (giây)
 
-MEMBER_NAMES = ["Kikuri", "Nijika", "Ryo", "Kita", "PA-san", "Seika", "Hitori", "TeamStarry"]
+API = "https://discord.com/api/v10"
 
-CHARACTER_GAMES = {
-    "Kikuri": "Drinking Board Games with Hiroi",
-    "Nijika": "Fat副社长 (Fat Vice President) Mobile Gacha",
-    "Ryo": "Retro Fighting Games at the Arcade",
-    "Kita": "Guitar Hero Online",
-    "PA-san": "Mahjong (with the STARRY staff)",
-    "Seika": "STARRY Management Simulator",
-    "Hitori": "Stay in the Closet Simulator",
-    "TeamStarry": "Bocchi the Rock! Gitadore / Arcade"
-}
+# Parse tokens từ chuỗi TOKEN (cách nhau bằng dấu phẩy)
+def parse_tokens(raw):
+    tokens = [t.strip() for t in raw.split(",") if t.strip()]
+    if not tokens:
+        print("Error: No tokens found in TOKEN environment variable!")
+        exit()
+    return tokens
 
-class TokenClient:
-    def __init__(self, token, name, guild_id, channel_id):
-        self.token = token
-        self.name = name
-        self.game = CHARACTER_GAMES.get(name, "Bocchi the Rock!")
-        self.guild_id = guild_id
-        self.channel_id = channel_id
+if not GUILD_ID or not CHANNEL_ID:
+    print("Error: Missing SERVER_ID or CHANNEL_ID environment variables!")
+    exit()
 
-    async def keep_alive(self):
-        uri = "wss://gateway.discord.gg/?v=10&encoding=json"
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(uri) as ws:
-                # 1. Handle initial connection
-                hello_msg = await ws.receive_json()
-                heartbeat_interval = hello_msg['d']['heartbeat_interval'] / 1000
-                
-                # 2. Define robust heartbeat
-                async def heartbeat():
-                    try:
-                        while not ws.closed:
-                            await asyncio.sleep(heartbeat_interval)
-                            await ws.send_json({"op": 1, "d": None})
-                    except Exception:
-                        pass # Silently handle connection drops
+async def heartbeat(ws, interval):
+    while True:
+        await asyncio.sleep(interval / 1000)
+        await ws.send(json.dumps({"op": 1, "d": None}))
 
-                hb_task = asyncio.create_task(heartbeat())
-                
-                # 3. Identify & Set Presence
-                await ws.send_json({
-                    "op": 2,
-                    "d": {
-                        "token": self.token,
-                        "properties": {"os": "windows", "browser": "chrome", "device": ""},
-                        "presence": {
-                            "activities": [{"name": self.game, "type": 0}],
-                            "status": "idle",
-                            "afk": True
-                        }
-                    }
-                })
-                
-                # 4. Join Voice
-                await ws.send_json({
-                    "op": 4,
-                    "d": {
-                        "guild_id": self.guild_id,
-                        "channel_id": self.channel_id,
-                        "self_mute": True,
-                        "self_deafen": True
-                    }
-                })
-                print(f"[+] {self.name} is in voice as AFK, playing: {self.game}")
-                
-                # 5. Keep alive until closed
-                try:
-                    async for msg in ws:
-                        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
-                            break
-                finally:
-                    hb_task.cancel()
+async def connect_token(token, guild_id, channel_id, status, self_mute, self_deaf, delay=0):
+    # Delay trước khi join (nếu có)
+    if delay > 0:
+        print(f"  Waiting {delay}s before connecting...")
+        await asyncio.sleep(delay)
 
-async def run_token(token, i, gid, cid):
-    name = MEMBER_NAMES[i] if i < len(MEMBER_NAMES) else f"User-{i}"
-    client = TokenClient(token, name, gid, cid)
-    await asyncio.sleep(i * 2) # Staggered connection
-    await client.keep_alive()
+    # Kiểm tra token
+    res = requests.get(f"{API}/users/@me", headers={"Authorization": token})
+    if res.status_code != 200:
+        print(f"[!] Invalid token: {token[:25]}...")
+        return
+    user = res.json()
+    print(f"[+] Logged in as {user['username']} ({user['id']})")
+
+    uri = "wss://gateway.discord.gg/?v=10&encoding=json"
+
+    async with websockets.connect(uri, max_size=None) as ws:
+        hello = json.loads(await ws.recv())
+        heartbeat_interval = hello["d"]["heartbeat_interval"]
+
+        asyncio.create_task(heartbeat(ws, heartbeat_interval))
+
+        # Identify
+        await ws.send(json.dumps({
+            "op": 2,
+            "d": {
+                "token": token,
+                "properties": {
+                    "$os": "windows",
+                    "$browser": "chrome",
+                    "$device": "pc"
+                },
+                "presence": {
+                    "status": status,
+                    "afk": False
+                }
+            }
+        }))
+
+        # Chờ READY
+        while True:
+            event = json.loads(await ws.recv())
+            if event.get("t") == "READY":
+                break
+
+        # Join voice channel
+        await ws.send(json.dumps({
+            "op": 4,
+            "d": {
+                "guild_id": guild_id,
+                "channel_id": channel_id,
+                "self_mute": self_mute,
+                "self_deaf": self_deaf
+            }
+        }))
+
+        print(f"  -> Joined voice! (Mute: {self_mute}, Deaf: {self_deaf})")
+
+        # Giữ kết nối
+        while True:
+            try:
+                await ws.recv()
+            except:
+                print(f"[!] {user['username']} disconnected, reconnecting...")
+                break
+
+async def run_token(token, delay=0):
+    while True:
+        try:
+            await connect_token(
+                token=token,
+                guild_id=GUILD_ID,
+                channel_id=CHANNEL_ID,
+                status=STATUS,
+                self_mute=SELF_MUTE,
+                self_deaf=SELF_DEAF,
+                delay=delay
+            )
+        except Exception as e:
+            print(f"[!] Error with token {token[:25]}...: {e}")
+            await asyncio.sleep(5)
 
 async def main():
-    tokens = [t.strip() for t in TOKENS_RAW.split(",") if t.strip()]
-    tasks = [asyncio.create_task(run_token(tokens[i], i, GUILD_ID, CHANNEL_ID)) 
-             for i in range(min(len(tokens), len(MEMBER_NAMES)))]
+    tokens = parse_tokens(TOKENS_RAW)
+    print(f"[*] Loaded {len(tokens)} token(s)")
+    print(f"[*] Guild: {GUILD_ID}")
+    print(f"[*] Channel: {CHANNEL_ID}")
+    print(f"[*] Join delay: {JOIN_DELAY}s between tokens")
+    print()
+
+    # Chạy từng token với delay 30s giữa các lần connect
+    tasks = []
+    for i, token in enumerate(tokens):
+        delay = i * JOIN_DELAY  # Token đầu join ngay, token sau cách nhau 30s
+        tasks.append(run_token(token, delay=delay))
+    
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(main())
